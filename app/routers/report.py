@@ -1,26 +1,28 @@
-
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import select, func, desc, asc, and_
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import select, func, desc, asc, and_, outerjoin
 from sqlalchemy.sql.expression import true, false
 from app.db import get_db
+# Ensure the ReportRequest and ReportDataRow schemas support the requested fields
 from app.schemas.report_data import ReportRequest, ReportResponse, ReportDataRow
-from app.models import Email, EmailProcessing, TriggerList, JiraTicket, ReportData, Notification
+# Using the provided class names for the models
+from app.models import RawEmail, SegregatedEmail, JiraEntry, Notification 
 from app.report_utils import generate_csv_report
 from app.auth_utils import verify_token
-from datetime import datetime, time, date
-from typing import List
+from datetime import datetime, time, date, timezone
+from typing import List, Tuple
 from decorators import log_function_call
 import asyncio
 
 router = APIRouter(prefix="/data", tags=["Report Generation"])
 
+# MAPPING FOR SORTING - Updated to use columns from the requested tables
 SORT_MAPPING = {
-    "received_at": ReportData.received_at,
-    "priority": ReportData.priority,
-    "timestamp": ReportData.timestamp,
-    "assigned_to": ReportData.assigned_to
+    "received_at": RawEmail.received_at,       # Maps to RawEmail.received_at
+    "priority": SegregatedEmail.priority,      # Maps to SegregatedEmail.priority
+    "timestamp": JiraEntry.created_at,         # Maps to JiraEntry.created_at (JIRA creation time)
+    "assigned_to": JiraEntry.assigned_to       # Maps to JiraEntry.assigned_to
 }
 
 @log_function_call
@@ -28,47 +30,102 @@ def get_report_data_query(
     db: Session,
     request: ReportRequest,
     only_count: bool = False
-):
-    """Constructs and executes the SQLAlchemy query for the report using the new ReportData table."""
+) -> Tuple[int, List[ReportDataRow]]:
+    """
+    Constructs and executes the SQLAlchemy query for the report using JOINs
+    from RawEmail, SegregatedEmail, and JiraEntry tables, selecting only
+    the specified fields.
+    """
 
-    # Build base query with filters
-    stmt = select(ReportData).where(
-        and_(
-            ReportData.received_at >= request.start_date,
-            ReportData.received_at <= request.end_date
-        )
-    )
+    # 1. Define the base columns to select (as per user request)
+    select_columns = [
+        RawEmail.email_id.label("email_id"),
+        RawEmail.received_at.label("received_at"),
+        RawEmail.sender.label("sender"),
+        RawEmail.subject.label("subject"),
+        SegregatedEmail.priority.label("priority"),
+        SegregatedEmail.type.label("type"),
+        JiraEntry.jiraticket_id.label("jiraticket_id"),
+        JiraEntry.created_at.label("timestamp"),  # Alias for ReportDataRow.timestamp
+        JiraEntry.assigned_to.label("assigned_to"),
+    ]
+    
+    # 2. Define the Base Query with JOINs
+    # Inner Join for SegregatedEmail (required fields are here)
+    # Outer Join for JiraEntry (ticket might not exist)
+    stmt = select(*select_columns).select_from(RawEmail) \
+        .join(SegregatedEmail, RawEmail.email_id == SegregatedEmail.email_id) \
+        .outerjoin(JiraEntry, RawEmail.email_id == JiraEntry.email_id)
+    print("stmt ",stmt)
+
+    # 3. Apply Filters
+    filter_clauses = [
+        # Filter by received_at timestamp
+        RawEmail.received_at >= request.start_date,
+        RawEmail.received_at <= request.end_date
+    ]
 
     if request.filter_type:
-        stmt = stmt.where(ReportData.type == request.filter_type)
+        filter_clauses.append(SegregatedEmail.type == request.filter_type)
 
     if request.filter_priority:
-        stmt = stmt.where(ReportData.priority == request.filter_priority)
+        filter_clauses.append(SegregatedEmail.priority == request.filter_priority)
 
-    # Count rows for pagination or early exit
-    count_stmt = select(func.count()).select_from(stmt.subquery())
+    stmt = stmt.where(and_(*filter_clauses))
+    
+    # 4. Count rows for pagination
+    # Use func.count() over a subquery to correctly count unique emails after joins
+    count_stmt = select(func.count()).select_from(
+        stmt.subquery()
+    )
     total_rows = db.execute(count_stmt).scalar_one()
+    
+
     if only_count:
         return total_rows, []
 
-    # Sorting
+    # 5. Sorting
     sort_column = SORT_MAPPING.get(request.sort_by)
-    if sort_column:
+    if sort_column is not None:
         order = desc if request.sort_order == 'desc' else asc
-        stmt = stmt.order_by(order(sort_column))
+        
+        # Explicitly handle NULLs for sorting on OUTER JOIN columns (JiraEntry)
+        if sort_column in [JiraEntry.created_at, JiraEntry.assigned_to]:
+            if request.sort_order == 'desc':
+                 stmt = stmt.order_by(order(sort_column).nulls_last())
+            else:
+                 stmt = stmt.order_by(order(sort_column).nulls_first())
+        else:
+             stmt = stmt.order_by(order(sort_column))
+
     else:
         # Default sort by most recent received_at
-        stmt = stmt.order_by(desc(ReportData.received_at))
+        stmt = stmt.order_by(desc(RawEmail.received_at))
 
-    # Pagination
+    # 6. Pagination
     stmt = stmt.limit(request.page_size).offset((request.page - 1) * request.page_size)
+    print("stmt2 in the second",stmt)
 
-    # Execute and transform to schema
+    # 7. Execute and transform to schema
     result = db.execute(stmt)
-    report_data_objects = [row[0] for row in result.all()]
-
+    # print("result == ",result.jiraticket_id)
+    
+    # Map the resulting row objects (which contain aliased fields) to the Pydantic schema
     data: List[ReportDataRow] = [
-        ReportDataRow.model_validate(obj) for obj in report_data_objects
+        ReportDataRow(
+            email_id=row.email_id,
+            received_at=row.received_at,
+            sender=row.sender,            # New field added
+            subject=row.subject,
+            priority=row.priority,
+            type=row.type,
+            jiraticket_id=row.jiraticket_id,
+            assigned_to=row.assigned_to,
+            timestamp=row.timestamp,
+            summary_text=None             # Explicitly set to None as it's not retrieved
+        )
+        for row in result.fetchall()
+        
     ]
     return total_rows, data
 
@@ -80,6 +137,7 @@ async def get_report_data(
 ):
     """Fetches paginated and filtered report data for the UI table."""
     total_rows, data = get_report_data_query(db, request)
+
 
     total_pages = (total_rows + request.page_size - 1) // request.page_size
 
@@ -122,10 +180,11 @@ async def download_report(
 
     notification_text = f"Report for {start_date_str} to {end_date_str} ({total_rows} rows) downloaded successfully."
 
+    # NOTE: The Notification model must be imported and timezone awareness is enforced.
     new_notification = Notification(
         user_id=user_id,
         text=notification_text,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc), # Use datetime.now(timezone.utc) for consistency
         read=False
     )
     db.add(new_notification)

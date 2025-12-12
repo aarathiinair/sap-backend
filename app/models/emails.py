@@ -17,4 +17,4 @@ class Email(Base):
     status = Column(String, nullable=False)
  
     processing_records = relationship("EmailProcessing", back_populates="email", cascade="all, delete-orphan")
-    report_entry = relationship("ReportData", back_populates="email", uselist=False) 
+    # report_entry = relationship("ReportData", back_populates="email", uselist=False) 

@@ -20,7 +20,7 @@ class ReportDataRow(BaseModel):
     received_at: datetime
     type: str
     priority: str
-    jira_ticket: Optional[str] = None
+    jiraticket_id: Optional[str] = None
     timestamp: Optional[datetime] = None
     assigned_to: Optional[str] = None
     
