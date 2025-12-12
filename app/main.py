@@ -31,7 +31,7 @@ app.add_middleware(
 for router in all_routers:
     app.include_router(router)
  
- 
+print("Routers loaded:", all_routers)
 # Seed users at startup
 @app.on_event("startup")
 def seed_users():
