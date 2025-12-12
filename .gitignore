@@ -1,0 +1,4 @@
+*.pyc
+generate_mock_data.py
+.env
+logs/app.log
