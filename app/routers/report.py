@@ -4,9 +4,7 @@ from sqlalchemy.orm import Session, aliased
 from sqlalchemy import select, func, desc, asc, and_, outerjoin
 from sqlalchemy.sql.expression import true, false
 from app.db import get_db
-# Ensure the ReportRequest and ReportDataRow schemas support the requested fields
 from app.schemas.report_data import ReportRequest, ReportResponse, ReportDataRow
-# Using the provided class names for the models
 from app.models import RawEmail, SegregatedEmail, JiraEntry, Notification 
 from app.report_utils import generate_csv_report
 from app.auth_utils import verify_token

@@ -64,7 +64,7 @@ def generate_csv_report(data: List[ReportDataRow]) -> io.StringIO:
             row.received_at.strftime('%Y-%m-%d %H:%M:%S'),
             row.type,
             row.priority,
-            row.jira_ticket if row.jira_ticket else "N/A",
+            row.jiraticket_id if row.jiraticket_id else "N/A",
             row.timestamp.strftime('%Y-%m-%d %H:%M:%S') if row.timestamp else "N/A",
         ])
  
