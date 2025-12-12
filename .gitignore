@@ -1,4 +1,5 @@
 *.pyc
 generate_mock_data.py
+generate_mock_maintenance.py
 .env
 logs/app.log
