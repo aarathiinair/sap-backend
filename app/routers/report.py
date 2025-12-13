@@ -1,26 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy.orm import Session, aliased
-from sqlalchemy import select, func, desc, asc, and_, outerjoin
-from sqlalchemy.sql.expression import true, false
+from sqlalchemy.orm import Session
+from sqlalchemy import select, func, desc, asc, and_, outerjoin, over, distinct
 from app.db import get_db
 from app.schemas.report_data import ReportRequest, ReportResponse, ReportDataRow
-from app.models import RawEmail, SegregatedEmail, JiraEntry, Notification 
+from app.models import RawEmail, SegregatedEmail, JiraEntry, Notification
 from app.report_utils import generate_csv_report
 from app.auth_utils import verify_token
-from datetime import datetime, time, date, timezone
+from datetime import datetime, date, timezone
 from typing import List, Tuple
 from decorators import log_function_call
-import asyncio
+from sqlalchemy.dialects import postgresql
 
 router = APIRouter(prefix="/data", tags=["Report Generation"])
 
-# MAPPING FOR SORTING - Updated to use columns from the requested tables
 SORT_MAPPING = {
-    "received_at": RawEmail.received_at,       # Maps to RawEmail.received_at
-    "priority": SegregatedEmail.priority,      # Maps to SegregatedEmail.priority
-    "timestamp": JiraEntry.created_at,         # Maps to JiraEntry.created_at (JIRA creation time)
-    "assigned_to": JiraEntry.assigned_to       # Maps to JiraEntry.assigned_to
+    "received_at": RawEmail.received_at,
+    "priority": SegregatedEmail.priority,
+    "timestamp": JiraEntry.created_at,
+    "assigned_to": JiraEntry.assigned_to
 }
 
 @log_function_call
@@ -29,66 +27,71 @@ def get_report_data_query(
     request: ReportRequest,
     only_count: bool = False
 ) -> Tuple[int, List[ReportDataRow]]:
-    """
-    Constructs and executes the SQLAlchemy query for the report using JOINs
-    from RawEmail, SegregatedEmail, and JiraEntry tables, selecting only
-    the specified fields.
-    """
 
-    # 1. Define the base columns to select (as per user request)
+    JiraEntry_Aliased = JiraEntry
+
+    jira_subquery = select(
+        JiraEntry_Aliased.email_id.label('sq_email_id'),
+        JiraEntry_Aliased.jiraticket_id.label('sq_jiraticket_id'),
+        JiraEntry_Aliased.created_at.label('sq_created_at'),
+        JiraEntry_Aliased.assigned_to.label('sq_assigned_to'),
+        func.row_number().over(
+            partition_by=JiraEntry_Aliased.email_id,
+            order_by=desc(JiraEntry_Aliased.created_at)
+        ).label('rn')
+    ).cte('jira_subquery')
+
+    latest_jira = select(jira_subquery).where(jira_subquery.c.rn == 1).subquery('latest_jira')
+
     select_columns = [
         RawEmail.email_id.label("email_id"),
         RawEmail.received_at.label("received_at"),
         RawEmail.sender.label("sender"),
         RawEmail.subject.label("subject"),
-        SegregatedEmail.priority.label("priority"),
-        SegregatedEmail.type.label("type"),
-        JiraEntry.jiraticket_id.label("jiraticket_id"),
-        JiraEntry.created_at.label("timestamp"),  # Alias for ReportDataRow.timestamp
-        JiraEntry.assigned_to.label("assigned_to"),
+        func.coalesce(SegregatedEmail.priority, func.cast('Informational', postgresql.VARCHAR)).label("priority"),
+        func.coalesce(SegregatedEmail.type, func.cast('Informational', postgresql.VARCHAR)).label("type"),
+        latest_jira.c.sq_jiraticket_id.label("jira_id"),
+        latest_jira.c.sq_created_at.label("timestamp"),
+        latest_jira.c.sq_assigned_to.label("assigned_to"),
     ]
-    
-    # 2. Define the Base Query with JOINs
-    # Inner Join for SegregatedEmail (required fields are here)
-    # Outer Join for JiraEntry (ticket might not exist)
-    stmt = select(*select_columns).select_from(RawEmail) \
-        .join(SegregatedEmail, RawEmail.email_id == SegregatedEmail.email_id) \
-        .outerjoin(JiraEntry, RawEmail.email_id == JiraEntry.email_id)
-    print("stmt ",stmt)
 
-    # 3. Apply Filters
+    stmt = select(*select_columns).select_from(RawEmail) \
+        .outerjoin(SegregatedEmail, RawEmail.email_id == SegregatedEmail.email_id) \
+        .outerjoin(latest_jira, RawEmail.email_id == latest_jira.c.sq_email_id)
+
     filter_clauses = [
-        # Filter by received_at timestamp
         RawEmail.received_at >= request.start_date,
         RawEmail.received_at <= request.end_date
     ]
 
     if request.filter_type:
-        filter_clauses.append(SegregatedEmail.type == request.filter_type)
+        if request.filter_type == "Informational":
+            stmt = stmt.where(and_(*filter_clauses, (SegregatedEmail.type == None) | (SegregatedEmail.type == "Informational")))
+        else:
+            stmt = stmt.where(and_(*filter_clauses, SegregatedEmail.type == request.filter_type))
+    elif request.filter_priority:
+        stmt = stmt.where(and_(*filter_clauses, SegregatedEmail.priority == request.filter_priority))
+    else:
+        stmt = stmt.where(and_(*filter_clauses))
 
-    if request.filter_priority:
-        filter_clauses.append(SegregatedEmail.priority == request.filter_priority)
-
-    stmt = stmt.where(and_(*filter_clauses))
+    total_rows = db.scalar(select(func.count()).select_from(stmt.subquery()))
     
-    # 4. Count rows for pagination
-    # Use func.count() over a subquery to correctly count unique emails after joins
-    count_stmt = select(func.count()).select_from(
-        stmt.subquery()
-    )
-    total_rows = db.execute(count_stmt).scalar_one()
-    
-
     if only_count:
         return total_rows, []
 
-    # 5. Sorting
-    sort_column = SORT_MAPPING.get(request.sort_by)
+    sort_column_map = {
+        "received_at": RawEmail.received_at,
+        "priority": SegregatedEmail.priority,
+        "timestamp": latest_jira.c.sq_created_at,
+        "assigned_to": latest_jira.c.sq_assigned_to
+    }
+    
+    sort_column = sort_column_map.get(request.sort_by)
+    
     if sort_column is not None:
         order = desc if request.sort_order == 'desc' else asc
-        
-        # Explicitly handle NULLs for sorting on OUTER JOIN columns (JiraEntry)
-        if sort_column in [JiraEntry.created_at, JiraEntry.assigned_to]:
+
+        if sort_column in [latest_jira.c.sq_created_at, latest_jira.c.sq_assigned_to]:
             if request.sort_order == 'desc':
                  stmt = stmt.order_by(order(sort_column).nulls_last())
             else:
@@ -97,34 +100,27 @@ def get_report_data_query(
              stmt = stmt.order_by(order(sort_column))
 
     else:
-        # Default sort by most recent received_at
         stmt = stmt.order_by(desc(RawEmail.received_at))
 
-    # 6. Pagination
     stmt = stmt.limit(request.page_size).offset((request.page - 1) * request.page_size)
-    print("stmt2 in the second",stmt)
 
-    # 7. Execute and transform to schema
     result = db.execute(stmt)
-    # print("result == ",result.jiraticket_id)
     
-    # Map the resulting row objects (which contain aliased fields) to the Pydantic schema
-    data: List[ReportDataRow] = [
-        ReportDataRow(
+    data: List[ReportDataRow] = []
+    for row in result.fetchall():
+        data.append(ReportDataRow(
             email_id=row.email_id,
             received_at=row.received_at,
-            sender=row.sender,            # New field added
+            sender=row.sender,
             subject=row.subject,
             priority=row.priority,
             type=row.type,
-            jiraticket_id=row.jiraticket_id,
-            assigned_to=row.assigned_to,
-            timestamp=row.timestamp,
-            summary_text=None             # Explicitly set to None as it's not retrieved
-        )
-        for row in result.fetchall()
-        
-    ]
+            jira_id=row.jira_id if row.jira_id else "N/A",
+            timestamp=row.timestamp if row.timestamp else None,
+            assigned_to=row.assigned_to if row.assigned_to else "N/A",
+            summary_text=None
+        ))
+
     return total_rows, data
 
 @router.get("/", response_model=ReportResponse)
@@ -178,11 +174,10 @@ async def download_report(
 
     notification_text = f"Report for {start_date_str} to {end_date_str} ({total_rows} rows) downloaded successfully."
 
-    # NOTE: The Notification model must be imported and timezone awareness is enforced.
     new_notification = Notification(
         user_id=user_id,
         text=notification_text,
-        timestamp=datetime.now(timezone.utc), # Use datetime.now(timezone.utc) for consistency
+        timestamp=datetime.now(timezone.utc),
         read=False
     )
     db.add(new_notification)
