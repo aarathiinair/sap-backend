@@ -32,9 +32,9 @@ def get_report_data_query(
 
     jira_subquery = select(
         JiraEntry_Aliased.email_id.label('sq_email_id'),
-        JiraEntry_Aliased.jiraticket_id.label('sq_jiraticket_id'),
+        JiraEntry_Aliased.jiraticket_id.label('jiraticket_id'), 
         JiraEntry_Aliased.created_at.label('sq_created_at'),
-        JiraEntry_Aliased.assigned_to.label('sq_assigned_to'),
+        JiraEntry_Aliased.assigned_to.label('assigned_to'),
         func.row_number().over(
             partition_by=JiraEntry_Aliased.email_id,
             order_by=desc(JiraEntry_Aliased.created_at)
@@ -50,9 +50,9 @@ def get_report_data_query(
         RawEmail.subject.label("subject"),
         func.coalesce(SegregatedEmail.priority, func.cast('Informational', postgresql.VARCHAR)).label("priority"),
         func.coalesce(SegregatedEmail.type, func.cast('Informational', postgresql.VARCHAR)).label("type"),
-        latest_jira.c.sq_jiraticket_id.label("jira_id"),
+        latest_jira.c.jiraticket_id.label("jiraticket_id"), 
         latest_jira.c.sq_created_at.label("timestamp"),
-        latest_jira.c.sq_assigned_to.label("assigned_to"),
+        latest_jira.c.assigned_to.label("assigned_to"),
     ]
 
     stmt = select(*select_columns).select_from(RawEmail) \
@@ -82,8 +82,8 @@ def get_report_data_query(
     sort_column_map = {
         "received_at": RawEmail.received_at,
         "priority": SegregatedEmail.priority,
-        "timestamp": latest_jira.c.sq_created_at,
-        "assigned_to": latest_jira.c.sq_assigned_to
+        "timestamp": latest_jira.c.sq_created_at, 
+        "assigned_to": latest_jira.c.assigned_to 
     }
     
     sort_column = sort_column_map.get(request.sort_by)
@@ -91,7 +91,9 @@ def get_report_data_query(
     if sort_column is not None:
         order = desc if request.sort_order == 'desc' else asc
 
-        if sort_column in [latest_jira.c.sq_created_at, latest_jira.c.sq_assigned_to]:
+        # The check for sorting on Outer Join columns also needs to be updated
+        # to use the new column references:
+        if sort_column in [latest_jira.c.sq_created_at, latest_jira.c.assigned_to]:
             if request.sort_order == 'desc':
                  stmt = stmt.order_by(order(sort_column).nulls_last())
             else:
@@ -115,10 +117,9 @@ def get_report_data_query(
             subject=row.subject,
             priority=row.priority,
             type=row.type,
-            jira_id=row.jira_id if row.jira_id else "N/A",
-            timestamp=row.timestamp if row.timestamp else None,
-            assigned_to=row.assigned_to if row.assigned_to else "N/A",
-            summary_text=None
+            jiraticket_id=row.jiraticket_id, 
+            timestamp=row.timestamp,
+            assigned_to=row.assigned_to, 
         ))
 
     return total_rows, data

@@ -51,23 +51,41 @@ def generate_mock_report_data(count: int = 10) -> List[ReportDataRow]:
 def generate_csv_report(data: List[ReportDataRow]) -> io.StringIO:
     """Converts a list of ReportDataRow objects into a CSV string."""
     output = io.StringIO()
-    writer = csv.writer(output)
- 
-    header = ["Email ID", "Sender", "Subject", "Received At", "Type", "Priority", "Jira Ticket", "Timestamp"]
+    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_NONE)
+
+    header = [
+        "Email ID", 
+        "Sender", 
+        "Subject", 
+        "Received At", 
+        "Type", 
+        "Priority", 
+        "Jira Ticket ID",
+        "Jira Created At",
+        "Assigned To",
+    ]
     writer.writerow(header)
- 
+
     for row in data:
+        jira_id_val = row.jiraticket_id if row.jiraticket_id and row.jiraticket_id != "N/A" else "N/A"
+        assigned_to_val = row.assigned_to if row.assigned_to and row.assigned_to != "N/A" else "N/A"
+
+        received_at_str = row.received_at.strftime('%Y-%m-%d %H:%M:%S')
+
+        timestamp_str = row.timestamp.strftime('%Y-%m-%d %H:%M:%S') if row.timestamp else "N/A"
+        
         writer.writerow([
             row.email_id,
             row.sender,
             row.subject,
-            row.received_at.strftime('%Y-%m-%d %H:%M:%S'),
+            received_at_str,
             row.type,
             row.priority,
-            row.jiraticket_id if row.jiraticket_id else "N/A",
-            row.timestamp.strftime('%Y-%m-%d %H:%M:%S') if row.timestamp else "N/A",
+            jira_id_val,
+            timestamp_str,
+            assigned_to_val,
         ])
- 
+
     output.seek(0)
     return output
  
