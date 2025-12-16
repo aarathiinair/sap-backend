@@ -66,13 +66,18 @@ def get_report_data_query(
 
     if request.filter_type:
         if request.filter_type == "Informational":
-            stmt = stmt.where(and_(*filter_clauses, (SegregatedEmail.type == None) | (SegregatedEmail.type == "Informational")))
+            # Informational includes explicit 'Informational' OR null values
+            filter_clauses.append((SegregatedEmail.type == None) | (SegregatedEmail.type == "Informational"))
         else:
-            stmt = stmt.where(and_(*filter_clauses, SegregatedEmail.type == request.filter_type))
-    elif request.filter_priority:
-        stmt = stmt.where(and_(*filter_clauses, SegregatedEmail.priority == request.filter_priority))
-    else:
-        stmt = stmt.where(and_(*filter_clauses))
+            filter_clauses.append(SegregatedEmail.type == request.filter_type)
+
+    if request.filter_priority:
+        if request.filter_priority == "Informational":
+            filter_clauses.append((SegregatedEmail.priority == None) | (SegregatedEmail.priority == "Informational"))
+        else:
+            filter_clauses.append(SegregatedEmail.priority == request.filter_priority)
+
+    stmt = stmt.where(and_(*filter_clauses))
 
     total_rows = db.scalar(select(func.count()).select_from(stmt.subquery()))
     
