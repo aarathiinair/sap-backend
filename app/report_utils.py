@@ -63,13 +63,14 @@ def generate_csv_report(data: List[ReportDataRow]) -> io.StringIO:
         "Jira Ticket ID",
         "Jira Created At",
         "Assigned To",
+        "Teams Channel"
     ]
     writer.writerow(header)
 
     for row in data:
         jira_id_val = row.jiraticket_id if row.jiraticket_id and row.jiraticket_id != "N/A" else "N/A"
         assigned_to_val = row.assigned_to if row.assigned_to and row.assigned_to != "N/A" else "N/A"
-
+        teams_channel_val = row.teams_channel if row.teams_channel and row.teams_channel != "N/A" else "N/A"
         received_at_str = row.received_at.strftime('%Y-%m-%d %H:%M:%S')
 
         timestamp_str = row.timestamp.strftime('%Y-%m-%d %H:%M:%S') if row.timestamp else "N/A"
@@ -84,6 +85,7 @@ def generate_csv_report(data: List[ReportDataRow]) -> io.StringIO:
             jira_id_val,
             timestamp_str,
             assigned_to_val,
+            teams_channel_val
         ])
 
     output.seek(0)
