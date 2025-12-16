@@ -23,6 +23,7 @@ class ReportDataRow(BaseModel):
     jiraticket_id: Optional[str] = None
     timestamp: Optional[datetime] = None
     assigned_to: Optional[str] = None
+    teams_channel: Optional[str] = None
     
     class Config:
         from_attributes = True

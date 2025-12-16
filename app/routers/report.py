@@ -35,6 +35,7 @@ def get_report_data_query(
         JiraEntry_Aliased.jiraticket_id.label('jiraticket_id'), 
         JiraEntry_Aliased.created_at.label('sq_created_at'),
         JiraEntry_Aliased.assigned_to.label('assigned_to'),
+        JiraEntry_Aliased.teams_channel.label('teams_channel'),
         func.row_number().over(
             partition_by=JiraEntry_Aliased.email_id,
             order_by=desc(JiraEntry_Aliased.created_at)
@@ -53,6 +54,7 @@ def get_report_data_query(
         latest_jira.c.jiraticket_id.label("jiraticket_id"), 
         latest_jira.c.sq_created_at.label("timestamp"),
         latest_jira.c.assigned_to.label("assigned_to"),
+        latest_jira.c.teams_channel.label("teams_channel"),
     ]
 
     stmt = select(*select_columns).select_from(RawEmail) \
@@ -65,17 +67,26 @@ def get_report_data_query(
     ]
 
     if request.filter_type:
-        if request.filter_type == "Informational":
-            # Informational includes explicit 'Informational' OR null values
-            filter_clauses.append((SegregatedEmail.type == None) | (SegregatedEmail.type == "Informational"))
+        search_type = request.filter_type.lower()
+        if search_type == "informational":
+            # Matches NULL, 'informational', 'Informational', 'INFORMATIONAL', etc.
+            filter_clauses.append(
+                (SegregatedEmail.type == None) | 
+                (func.lower(SegregatedEmail.type) == "informational")
+            )
         else:
-            filter_clauses.append(SegregatedEmail.type == request.filter_type)
+            # Case-insensitive match for other types (e.g., 'actionable')
+            filter_clauses.append(func.lower(SegregatedEmail.type) == search_type)
 
     if request.filter_priority:
-        if request.filter_priority == "Informational":
-            filter_clauses.append((SegregatedEmail.priority == None) | (SegregatedEmail.priority == "Informational"))
+        search_priority = request.filter_priority.lower()
+        if search_priority == "informational":
+            filter_clauses.append(
+                (SegregatedEmail.priority == None) | 
+                (func.lower(SegregatedEmail.priority) == "informational")
+            )
         else:
-            filter_clauses.append(SegregatedEmail.priority == request.filter_priority)
+            filter_clauses.append(func.lower(SegregatedEmail.priority) == search_priority)
 
     stmt = stmt.where(and_(*filter_clauses))
 
@@ -86,7 +97,8 @@ def get_report_data_query(
 
     sort_column_map = {
         "received_at": RawEmail.received_at,
-        "priority": SegregatedEmail.priority,
+        "priority": func.lower(SegregatedEmail.priority),
+        "type": func.lower(SegregatedEmail.type),
         "timestamp": latest_jira.c.sq_created_at, 
         "assigned_to": latest_jira.c.assigned_to 
     }
@@ -124,7 +136,8 @@ def get_report_data_query(
             type=row.type,
             jiraticket_id=row.jiraticket_id, 
             timestamp=row.timestamp,
-            assigned_to=row.assigned_to, 
+            assigned_to=row.assigned_to,
+            teams_channel=row.teams_channel
         ))
 
     return total_rows, data

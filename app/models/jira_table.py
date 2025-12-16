@@ -17,9 +17,10 @@ class JiraEntry(Base):
     
     jiraticket_id = Column(String(50), unique=True, nullable=False) # e.g., 'PROJ-1234'
     assigned_to = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, comment="JIRA creation time")
-    
-    inserted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime(timezone=False), nullable=False, comment="JIRA creation time")
+    teams_flag = Column(String(10), nullable=True, default='false', comment="Teams notification sent status")
+    teams_channel = Column(String(100), nullable=True, comment="Teams channel the notification was sent to")
+    inserted_at = Column(DateTime(timezone=False), default=lambda: datetime.strptime(datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[0:23], '%Y-%m-%d %H:%M:%S.%f'), nullable=False)
     
     # Relationship to the parent RawEmail
     raw_email = relationship("RawEmail", back_populates="jira_entry")
