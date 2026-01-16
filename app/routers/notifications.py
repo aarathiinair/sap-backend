@@ -34,10 +34,17 @@ def create_notification_response(notification: Notification) -> NotificationResp
 @router.get("/", response_model=List[NotificationResponse])
 @log_function_call
 def get_user_notifications(db: Session = Depends(get_db), payload: dict = Depends(verify_token)):
-    user_id = payload.get("sub")
-    # Fetch unread notifications for the current user, ordered by newest first
+    user_id_str = payload.get("sub")
+    
+    # Convert string to UUID for the DB query
+    try:
+        user_uuid = uuid.UUID(user_id_str)
+    except ValueError:
+        # Fallback if the sub isn't a standard UUID
+        user_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, user_id_str)
+
     notifications = db.query(Notification).filter(
-        Notification.user_id == user_id,
+        Notification.user_id == user_uuid, # Use the UUID object here
         Notification.read == False
     ).order_by(Notification.timestamp.desc()).all()
     

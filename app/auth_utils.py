@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
-from jose import jwt
+from jose import jwt, JWTError
 from cryptography.fernet import Fernet
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import os
@@ -46,19 +46,21 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
  
  
-def verify_token(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """Decode JWT and return payload"""
+def verify_token(token: str = Depends(oauth2_scheme)):
+    """
+    Decodes the JWT and returns the payload.
+    No database lookup is performed to avoid UUID conversion errors.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         if user_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token: no subject")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
- 
-    # Ensure user still exists
-    user = db.query(User).filter(User.user_id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
- 
-    return payload
+            raise credentials_exception
+        return payload # Returns the dict containing 'sub' and 'username'
+    except JWTError:
+        raise credentials_exception

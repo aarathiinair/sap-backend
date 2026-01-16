@@ -48,13 +48,19 @@ async def call_update_interval_api(frequency_value: int):
 @router.get("/", response_model=ConfigResponse)
 @log_function_call
 def get_parameters(db: Session = Depends(get_db), payload: dict = Depends(verify_token)):
-    if payload.get("role") not in ["Super Admin"]:
-        raise HTTPException(status_code=403, detail="Not allowed")
+    # ANY authenticated user can now access this
+    user_id_str = payload.get("sub")
     
-    user_id = uuid.UUID(payload.get("sub"))
-    username = payload.get("username")
-    
+    # Try to convert SSO sub to UUID if your DB requires it, 
+    # otherwise use the string. Assuming UUID as per your model:
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        # If Azure provides a non-compatible string, we use a namespace UUID to keep it consistent
+        user_id = uuid.uuid5(uuid.NAMESPACE_DNS, user_id_str)
+
     config = db.query(Config).order_by(Config.created_at.desc()).first()
+    
     if not config:
         config = Config(
             id=uuid.uuid4(),
@@ -67,17 +73,6 @@ def get_parameters(db: Session = Depends(get_db), payload: dict = Depends(verify
             teams_webhook="",
         )
         db.add(config)
-
-        notification_text = f"Configuration updated by {username}."
-
-        new_notification = Notification(
-            user_id=user_id,
-            text=notification_text,
-            timestamp=datetime.utcnow(),
-            read=False
-        )
-        db.add(new_notification)
-
         db.commit()
         db.refresh(config)
     
@@ -90,14 +85,17 @@ async def create_parameters(
     db: Session = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    if payload.get("role") not in ["Admin", "Super Admin"]:
-        raise HTTPException(status_code=403, detail="Not allowed")
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except ValueError:
+        user_id = uuid.uuid5(uuid.NAMESPACE_DNS, user_id_str)
 
-    new_job_frequency = request.job_frequency if isinstance(request.job_frequency, int) else None
-    
+    new_job_frequency = request.job_frequency
+
     new_config = Config(
         id=uuid.uuid4(),
-        user_id=uuid.UUID(payload.get("sub")),
+        user_id=user_id,
         created_at=datetime.utcnow(),
         job_frequency=new_job_frequency, 
         outlook_email=request.outlook_email or "",
