@@ -11,6 +11,7 @@ from datetime import datetime, date, timezone
 from typing import List, Tuple
 from decorators import log_function_call
 from sqlalchemy.dialects import postgresql
+import uuid
 
 router = APIRouter(prefix="/data", tags=["Report Generation"])
 
@@ -172,7 +173,12 @@ async def download_report(
     """Generates and downloads the full report data as a CSV file."""
 
     # SSO payload contains 'sub' (the UUID)
-    user_id = payload.get("sub")
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid.UUID(user_id_str)
+    except (ValueError, TypeError):
+        # If 'sub' is a plain string like 'abc', generate a consistent UUID based on it
+        user_id = uuid.uuid5(uuid.NAMESPACE_DNS, str(user_id_str))
 
     total_rows, _ = get_report_data_query(db, request, only_count=True)
 
