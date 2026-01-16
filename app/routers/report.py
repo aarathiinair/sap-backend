@@ -167,12 +167,12 @@ async def get_report_data(
 async def download_report(
     request: ReportRequest,
     db: Session = Depends(get_db),
-    payload: dict = Depends(verify_token)
+    payload: dict = Depends(verify_token) # Token is verified, no role check needed
 ):
     """Generates and downloads the full report data as a CSV file."""
 
+    # SSO payload contains 'sub' (the UUID)
     user_id = payload.get("sub")
-    username = payload.get("username")
 
     total_rows, _ = get_report_data_query(db, request, only_count=True)
 
@@ -184,17 +184,11 @@ async def download_report(
 
     csv_file = generate_csv_report(full_data)
 
-    try:
-        start_date_str = request.start_date.strftime('%d-%m-%Y')
-        end_date_str = request.end_date.strftime('%d-%m-%Y')
-    except AttributeError:
-        start_date_str = str(request.start_date)
-        end_date_str = str(request.end_date)
-
-    notification_text = f"Report for {start_date_str} to {end_date_str} ({total_rows} rows) downloaded successfully."
+    # Simplified notification logic
+    notification_text = f"Report ({total_rows} rows) downloaded successfully."
 
     new_notification = Notification(
-        user_id=user_id,
+        user_id=user_id, # Link directly to the SSO UID
         text=notification_text,
         timestamp=datetime.now(timezone.utc),
         read=False
