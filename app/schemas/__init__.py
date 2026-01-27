@@ -3,7 +3,7 @@ from .duplicate_emails import DuplicateEmailBase, DuplicateEmailResponse
 from .email_processing import EmailProcessingBase, EmailProcessingResponse
 from .error_code_mapping import ErrorCodeMappingBase, ErrorCodeMappingResponse
 from .jira_ticket import JiraTicketBase, JiraTicketResponse
-from .trigger_list import TriggerListBase, TriggerListResponse, TriggerUpdate
+from .trigger_list import TriggerMappingBase, TriggerMappingCreate, TriggerMappingResponse, TriggerMappingUpdate
 from .user import UserBase, UserCreate, UserResponse
 from .config import ConfigBase, ConfigUpdate, ConfigResponse
 from .report_data import ReportRequest, ReportDataRow, ReportResponse
