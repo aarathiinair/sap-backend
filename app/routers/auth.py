@@ -1,47 +1,75 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from fastapi.security import OAuth2PasswordRequestForm
-from datetime import timedelta
-from decorators import log_function_call
- 
-from app.db import get_db
-from app.models.user import User
-from app.auth_utils import create_access_token, decrypt_password
-from app.schemas.auth import LoginResponse
-from app.schemas.user import UserResponse
- 
+import os
+import msal
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from app.auth_utils import create_access_token 
+from dotenv import load_dotenv
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+
 router = APIRouter(prefix="/auth", tags=["auth"])
- 
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-@router.post("/login", response_model=LoginResponse)
-@log_function_call
-def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db),
-):
-    user = db.query(User).filter(User.username == form_data.username).first()
+# MSAL Configuration
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+TENANT_ID = os.getenv("TENANT_ID")
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+SCOPE = ["User.Read"]
+# REDIRECT_URI must match exactly what is registered in Azure Portal
+REDIRECT_URI = f"{os.getenv('FRONTEND_URL', 'http://localhost:443')}/"
 
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    
-    try:
-        stored_password = decrypt_password(user.password)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Password decryption failed")
-    
-    if form_data.password != stored_password:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
- 
-    # generate JWT
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": str(user.user_id), "username": user.username, "role": user.role},
-        expires_delta=access_token_expires,
-    )
- 
+msal_app = msal.ConfidentialClientApplication(
+    CLIENT_ID, authority=AUTHORITY, client_credential=CLIENT_SECRET
+)
+
+@router.get("/login")
+async def login():
+    """
+    Step 1: Initiate Auth Flow. 
+    We return the flow object to the frontend to store in sessionStorage.
+    """
+    flow = msal_app.initiate_auth_code_flow(SCOPE, redirect_uri=REDIRECT_URI)
     return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": UserResponse.model_validate(user)
+        "auth_url": flow["auth_uri"],
+        "flow": flow 
     }
+
+@router.post("/exchange")
+async def exchange_code(payload: dict):
+    flow = payload.get("flow")
+    code = payload.get("code")
+    state = payload.get("state") # <--- Get state from payload
+    
+    if not flow or not code or not state:
+        raise HTTPException(status_code=400, detail="Missing auth data.")
+
+    # Prepare the auth_response dictionary that MSAL expects
+    auth_response = {
+        "code": code,
+        "state": state
+    }
+        
+    # MSAL compares auth_response["state"] with flow["state"]
+    result = msal_app.acquire_token_by_auth_code_flow(flow, auth_response)
+    
+    if "error" in result:
+        print("--- MSAL EXCHANGE ERROR ---")
+        print(f"Error: {result.get('error')}")
+        print(f"Description: {result.get('error_description')}")
+        print(f"Correlation ID: {result.get('correlation_id')}")
+        print("---------------------------")
+        return JSONResponse(status_code=400, content=result)
+
+    # Extract user info
+    claims = result.get("id_token_claims", {})
+    username = claims.get("preferred_username") or claims.get("name")
+    
+    if not username:
+        raise HTTPException(status_code=400, detail="Could not retrieve username from Microsoft.")
+
+    # Create your internal JWT
+    token = create_access_token(data={"sub": username, "username": username})
+    
+    return {"token": token, "username": username}

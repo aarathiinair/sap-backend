@@ -11,6 +11,4 @@ class Notification(Base):
     text = Column(String, nullable=False)
     timestamp = Column(DateTime, nullable=False, default=datetime.now)
     read = Column(Boolean, nullable=False, default=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey('users.user_id'))
-
-    user = relationship("User", back_populates="notifications")
+    user_id = Column(UUID(as_uuid=True))

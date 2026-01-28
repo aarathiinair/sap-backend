@@ -51,7 +51,7 @@ def generate_mock_report_data(count: int = 10) -> List[ReportDataRow]:
 def generate_csv_report(data: List[ReportDataRow]) -> io.StringIO:
     """Converts a list of ReportDataRow objects into a CSV string."""
     output = io.StringIO()
-    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_NONE)
+    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
 
     header = [
         "Email ID", 

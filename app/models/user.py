@@ -15,7 +15,3 @@ class User(Base):
     role = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False)
     created_by = Column(String, nullable=False)
- 
-    # relationships
-    configs = relationship("Config", back_populates="user")
-    notifications = relationship("Notification", back_populates="user")
