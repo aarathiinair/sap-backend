@@ -13,6 +13,12 @@ from dotenv import load_dotenv
  
 load_dotenv()
 
+from starlette.middleware.sessions import SessionMiddleware
+import os
+from dotenv import load_dotenv
+ 
+load_dotenv()
+
 # Create DB tables if they don’t exist
 Base.metadata.create_all(bind=engine)
  
@@ -30,6 +36,15 @@ app.add_middleware(
     domain="bitzer.biz",
 )
 
+
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=os.getenv("SESSION_SECRET_KEY", "najkwe&7qyw7iqhi&W^Yiu2hb13jk213uy"),
+    session_cookie="msal_session",
+    same_site="lax",
+    domain="bitzer.biz",
+)
+
 # CORS config for frontend
 app.add_middleware(
     CORSMiddleware,
@@ -37,7 +52,11 @@ app.add_middleware(
                    "https://127.0.0.1:4200",
                    "http://localhost:443",
                    "https://127.0.0.1:443",
-                   "https://monitoring-dev.bitzer.biz"],
+                   "http://localhost",
+                   "http://localhost:80",
+                   "https://127.0.0.1:80",
+                   "https://monitoring-dev.bitzer.biz",
+                   "https://monitoring-uat.bitzer.biz"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
