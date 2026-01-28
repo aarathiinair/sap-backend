@@ -1,18 +1,31 @@
 from pydantic import BaseModel, ConfigDict
- 
-class TriggerListBase(BaseModel):
-    triggername: str
-    category: str
-    actionable: bool
-    priority: str
-    enabled: bool
- 
-class TriggerUpdate(BaseModel):
-    triggername: str | None = None
-    category: str | None = None
-    actionable: bool | None = None
-    priority: str | None = None
-    enabled: bool | None = None
- 
-class TriggerListResponse(TriggerListBase):
+from typing import Optional
+
+class TriggerMappingBase(BaseModel):
+    trigger_name: str
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    actionable: Optional[str] = None
+    jira_group: Optional[str] = None
+    recommended_action: Optional[str] = None
+    team: str
+    department: Optional[str] = None
+    responsible_persons: Optional[str] = None
+
+class TriggerMappingCreate(TriggerMappingBase):
+    pass
+
+class TriggerMappingUpdate(BaseModel):
+    trigger_name: Optional[str] = None
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    actionable: Optional[str] = None
+    jira_group: Optional[str] = None
+    recommended_action: Optional[str] = None
+    team: Optional[str] = None
+    department: Optional[str] = None
+    responsible_persons: Optional[str] = None
+
+class TriggerMappingResponse(TriggerMappingBase):
+    id: int
     model_config = ConfigDict(from_attributes=True)
