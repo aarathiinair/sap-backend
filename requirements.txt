@@ -1,0 +1,8 @@
+itsdangerous
+loguru
+httpx
+python-jose
+msal
+python-dotenv
+fastapi
+sqlalchemy
