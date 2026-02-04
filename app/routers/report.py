@@ -1,210 +1,241 @@
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, desc, asc, and_, outerjoin, over, distinct
+from sqlalchemy import select, func, desc, asc, and_, cast, String
+from sqlalchemy.dialects import postgresql
 from app.db import get_db
-from app.schemas.report_data import ReportRequest, ReportResponse, ReportDataRow
-from app.models import RawEmail, SegregatedEmail, JiraEntry, Notification
+from app.schemas.report_data import ReportRequest, ReportResponse
+from app.models import RawEmail, SegregatedEmail, JiraEntry, Notification, Certificate, JiraState
 from app.report_utils import generate_csv_report
 from app.auth_utils import verify_token
-from datetime import datetime, date, timezone
-from typing import List, Tuple
-from decorators import log_function_call
-from sqlalchemy.dialects import postgresql
+from datetime import datetime, timezone, date
 import uuid
+from typing import List, Tuple, Any
 
 router = APIRouter(prefix="/data", tags=["Report Generation"])
 
-SORT_MAPPING = {
-    "received_at": RawEmail.received_at,
-    "priority": SegregatedEmail.priority,
-    "timestamp": JiraEntry.created_at,
-    "assigned_to": JiraEntry.assigned_to
-}
-
-@log_function_call
-def get_report_data_query(
-    db: Session,
-    request: ReportRequest,
-    only_count: bool = False
-) -> Tuple[int, List[ReportDataRow]]:
-
-    JiraEntry_Aliased = JiraEntry
-
+# --- HANDLER 1: ControlUp ---
+def query_controlup_mails(db: Session, request: ReportRequest):
+    # 1. CTE for latest Jira Entry per email
     jira_subquery = select(
-        JiraEntry_Aliased.email_id.label('sq_email_id'),
-        JiraEntry_Aliased.jiraticket_id.label('jiraticket_id'), 
-        JiraEntry_Aliased.created_at.label('sq_created_at'),
-        JiraEntry_Aliased.assigned_to.label('assigned_to'),
-        JiraEntry_Aliased.teams_channel.label('teams_channel'),
+        JiraEntry.email_id.label('sq_email_id'),
+        JiraEntry.jiraticket_id.label('jiraticket_id'), 
+        JiraEntry.created_at.label('sq_created_at'),
+        JiraEntry.assigned_to.label('assigned_to'),
+        JiraEntry.teams_channel.label('teams_channel'),
         func.row_number().over(
-            partition_by=JiraEntry_Aliased.email_id,
-            order_by=desc(JiraEntry_Aliased.created_at)
+            partition_by=JiraEntry.email_id,
+            order_by=desc(JiraEntry.created_at)
         ).label('rn')
     ).cte('jira_subquery')
 
-    latest_jira = select(jira_subquery).where(jira_subquery.c.rn == 1).subquery('latest_jira')
+    # 2. Subquery to pick only the most recent ticket
+    latest_jira = select(
+        jira_subquery.c.sq_email_id,
+        jira_subquery.c.jiraticket_id,
+        jira_subquery.c.sq_created_at,
+        jira_subquery.c.assigned_to,
+        jira_subquery.c.teams_channel
+    ).where(jira_subquery.c.rn == 1).subquery('latest_jira')
 
-    select_columns = [
+    # 3. Main Statement
+    # Note: Explicitly label columns to ensure the Row object keys match your Pydantic/Frontend expectations
+    stmt = select(
         RawEmail.email_id.label("email_id"),
         RawEmail.received_at.label("received_at"),
         RawEmail.sender.label("sender"),
         RawEmail.subject.label("subject"),
+        # Use a case-insensitive coalesce check
         func.coalesce(SegregatedEmail.priority, func.cast('Informational', postgresql.VARCHAR)).label("priority"),
         func.coalesce(SegregatedEmail.type, func.cast('Informational', postgresql.VARCHAR)).label("type"),
         latest_jira.c.jiraticket_id.label("jiraticket_id"), 
         latest_jira.c.sq_created_at.label("timestamp"),
         latest_jira.c.assigned_to.label("assigned_to"),
         latest_jira.c.teams_channel.label("teams_channel"),
-    ]
+    ).select_from(RawEmail)\
+     .outerjoin(SegregatedEmail, RawEmail.email_id == SegregatedEmail.email_id)\
+     .outerjoin(latest_jira, RawEmail.email_id == latest_jira.c.sq_email_id)
 
-    stmt = select(*select_columns).select_from(RawEmail) \
-        .outerjoin(SegregatedEmail, RawEmail.email_id == SegregatedEmail.email_id) \
-        .outerjoin(latest_jira, RawEmail.email_id == latest_jira.c.sq_email_id)
-
-    filter_clauses = [
-        RawEmail.received_at >= request.start_date,
-        RawEmail.received_at <= request.end_date
-    ]
-
+    # 4. Filter Logic Fix
+    # Ensure start/end date are within range
+    filter_clauses = [RawEmail.received_at >= request.start_date, RawEmail.received_at <= request.end_date]
+    
     if request.filter_type:
         search_type = request.filter_type.lower()
         if search_type == "informational":
-            # Matches NULL, 'informational', 'Informational', 'INFORMATIONAL', etc.
-            filter_clauses.append(
-                (SegregatedEmail.type == None) | 
-                (func.lower(SegregatedEmail.type) == "informational")
-            )
+            # Correctly handle NULL values as Informational
+            filter_clauses.append((SegregatedEmail.type == None) | (func.lower(SegregatedEmail.type) == "informational"))
         else:
-            # Case-insensitive match for other types (e.g., 'actionable')
+            # If searching for 'actionable', we MUST match explicitly
             filter_clauses.append(func.lower(SegregatedEmail.type) == search_type)
-
+    
     if request.filter_priority:
         search_priority = request.filter_priority.lower()
         if search_priority == "informational":
-            filter_clauses.append(
-                (SegregatedEmail.priority == None) | 
-                (func.lower(SegregatedEmail.priority) == "informational")
-            )
+            filter_clauses.append((SegregatedEmail.priority == None) | (func.lower(SegregatedEmail.priority) == "informational"))
         else:
             filter_clauses.append(func.lower(SegregatedEmail.priority) == search_priority)
 
     stmt = stmt.where(and_(*filter_clauses))
-
-    total_rows = db.scalar(select(func.count()).select_from(stmt.subquery()))
     
-    if only_count:
-        return total_rows, []
-
-    sort_column_map = {
+    # 5. Sort Map
+    # Map the frontend string to the actual SQLAlchemy column object
+    sort_map = {
         "received_at": RawEmail.received_at,
+        "sender": RawEmail.sender,
+        "subject": RawEmail.subject,
         "priority": func.lower(SegregatedEmail.priority),
         "type": func.lower(SegregatedEmail.type),
-        "timestamp": latest_jira.c.sq_created_at, 
-        "assigned_to": latest_jira.c.assigned_to 
+        "timestamp": latest_jira.c.sq_created_at,
+        "assigned_to": latest_jira.c.assigned_to
     }
     
-    sort_column = sort_column_map.get(request.sort_by)
+    return stmt, sort_map
+
+# --- HANDLER 2: Certificates ---
+def query_certificates(db: Session, request: ReportRequest):
+    # 1. Base Query
+    stmt = select(
+        Certificate.certificate_name,
+        Certificate.expiration_date,
+        Certificate.calculated_status,
+        Certificate.responsible_group,
+        Certificate.teams_channel,
+        Certificate.description,
+        Certificate.usage,
+        Certificate.effected_users,
+        JiraState.jira_ticket_id
+    ).select_from(Certificate)\
+     .outerjoin(JiraState, Certificate.certificate_name == JiraState.certificate_name)
+
+    # 2. Base Filters (Dates)
+    filter_clauses = [
+        Certificate.expiration_date >= request.start_date,
+        Certificate.expiration_date <= request.end_date
+    ]
+
+    # 3. Status Filter (Fixing the Enum + lower() issue)
+    if request.filter_type:
+        # We cast to String here so PostgreSQL can compare text
+        # 'ilike' is case-insensitive, handling 'Expiring Soon' or 'EXPIRING_SOON'
+        search_status = request.filter_type.strip()
+        filter_clauses.append(
+            cast(Certificate.calculated_status, String).ilike(search_status)
+        )
+
+    # 4. Responsible Group Filter
+    if request.responsible_group:
+        filter_clauses.append(Certificate.responsible_group == request.responsible_group)
+
+    stmt = stmt.where(and_(*filter_clauses))
+
+    # 5. Sorting Map
+    sort_map = {
+        "certificate_name": Certificate.certificate_name,
+        "expiration_date": Certificate.expiration_date,
+        "calculated_status": Certificate.calculated_status,
+        "responsible_group": Certificate.responsible_group,
+        "jira_ticket_id": JiraState.jira_ticket_id
+    }
+
+    return stmt, sort_map
+
+# --- Registry Mapping ---
+REPORT_HANDLERS = {
+    "ControlUp": query_controlup_mails,
+    "Certificates": query_certificates
+}
+
+def get_filtered_query(db: Session, request: ReportRequest):
+    handler = REPORT_HANDLERS.get(request.source)
+    if not handler:
+        raise HTTPException(status_code=400, detail=f"Invalid source: {request.source}")
     
-    if sort_column is not None:
-        order = desc if request.sort_order == 'desc' else asc
+    stmt, sort_map = handler(db, request)
 
-        # The check for sorting on Outer Join columns also needs to be updated
-        # to use the new column references:
-        if sort_column in [latest_jira.c.sq_created_at, latest_jira.c.assigned_to]:
-            if request.sort_order == 'desc':
-                 stmt = stmt.order_by(order(sort_column).nulls_last())
-            else:
-                 stmt = stmt.order_by(order(sort_column).nulls_first())
-        else:
-             stmt = stmt.order_by(order(sort_column))
-
-    else:
-        stmt = stmt.order_by(desc(RawEmail.received_at))
-
-    stmt = stmt.limit(request.page_size).offset((request.page - 1) * request.page_size)
-
-    result = db.execute(stmt)
+    # Generic Sorting Logic
+    order = desc if request.sort_order == 'desc' else asc
+    sort_col = sort_map.get(request.sort_by)
     
-    data: List[ReportDataRow] = []
-    for row in result.fetchall():
-        data.append(ReportDataRow(
-            email_id=row.email_id,
-            received_at=row.received_at,
-            sender=row.sender,
-            subject=row.subject,
-            priority=row.priority,
-            type=row.type,
-            jiraticket_id=row.jiraticket_id, 
-            timestamp=row.timestamp,
-            assigned_to=row.assigned_to,
-            teams_channel=row.teams_channel
-        ))
-
-    return total_rows, data
+    if sort_col is not None:
+        stmt = stmt.order_by(order(sort_col).nulls_last())
+    
+    return stmt
 
 @router.get("/", response_model=ReportResponse)
-@log_function_call
-async def get_report_data(
-    request: ReportRequest = Depends(),
-    db: Session = Depends(get_db)
-):
-    """Fetches paginated and filtered report data for the UI table."""
-    total_rows, data = get_report_data_query(db, request)
-
-
-    total_pages = (total_rows + request.page_size - 1) // request.page_size
+async def get_report_data(request: ReportRequest = Depends(), db: Session = Depends(get_db)):
+    # 1. Get the base query (without sorting)
+    handler = REPORT_HANDLERS.get(request.source)
+    if not handler:
+        raise HTTPException(status_code=400, detail=f"Invalid source: {request.source}")
+    
+    # We call the handler to get the base stmt and sort_map
+    stmt, sort_map = handler(db, request)
+    
+    # 2. Count total rows BEFORE applying sorting or paging
+    # This avoids the "ORDER BY in subquery" error
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total_rows = db.scalar(count_stmt)
+    
+    # 3. Apply Generic Sorting Logic to the original stmt
+    order = desc if request.sort_order == 'desc' else asc
+    sort_col = sort_map.get(request.sort_by)
+    
+    if sort_col is not None:
+        # Apply sorting only to the statement used for data fetching
+        stmt = stmt.order_by(order(sort_col).nulls_last())
+    
+    # 4. Paging
+    stmt = stmt.limit(request.page_size).offset((request.page - 1) * request.page_size)
+    
+    # 5. Fetch data
+    result = db.execute(stmt).mappings().all()
 
     return ReportResponse(
-        data=data,
+        data=list(result),
         total_rows=total_rows,
         page=request.page,
         page_size=request.page_size,
-        total_pages=total_pages
+        total_pages=(total_rows + request.page_size - 1) // request.page_size if total_rows else 0
     )
 
 @router.post("/download")
-@log_function_call
 async def download_report(
-    request: ReportRequest,
-    db: Session = Depends(get_db),
-    payload: dict = Depends(verify_token) # Token is verified, no role check needed
+    request: ReportRequest = Body(...),  # Explicitly tell FastAPI this is the JSON body
+    db: Session = Depends(get_db), 
+    payload: dict = Depends(verify_token)
 ):
-    """Generates and downloads the full report data as a CSV file."""
+    username = payload.get("username", "Unknown User")
 
-    # SSO payload contains 'sub' (the UUID)
     user_id_str = payload.get("sub")
-    try:
-        user_id = uuid.UUID(user_id_str)
-    except (ValueError, TypeError):
-        # If 'sub' is a plain string like 'abc', generate a consistent UUID based on it
-        user_id = uuid.uuid5(uuid.NAMESPACE_DNS, str(user_id_str))
+    if not user_id_str:
+        raise HTTPException(status_code=401, detail="User identifier missing in token")
+    
+    # Matching your UUID conversion logic
+    user_id = uuid.uuid5(uuid.NAMESPACE_DNS, str(user_id_str))
+    
+    # 1. Get query (Pass db and request)
+    stmt, sort_map = query_controlup_mails(db, request) if request.source == "ControlUp" else query_certificates(db, request)
 
-    total_rows, _ = get_report_data_query(db, request, only_count=True)
+    # 2. Add sorting from the generic logic
+    order = desc if request.sort_order == 'desc' else asc
+    sort_col = sort_map.get(request.sort_by)
+    if sort_col is not None:
+        stmt = stmt.order_by(order(sort_col).nulls_last())
 
-    if total_rows == 0:
-        raise HTTPException(status_code=404, detail="No data found for the selected criteria.")
+    # 3. Execute without LIMIT/OFFSET for full download
+    full_data = db.execute(stmt).mappings().all()
 
-    full_request = request.model_copy(update={"page": 1, "page_size": total_rows})
-    _, full_data = get_report_data_query(db, full_request)
+    if not full_data:
+        raise HTTPException(status_code=404, detail="No data found.")
 
-    csv_file = generate_csv_report(full_data)
-
-    # Simplified notification logic
-    notification_text = f"Report ({total_rows} rows) downloaded successfully."
-
-    new_notification = Notification(
-        user_id=user_id, # Link directly to the SSO UID
-        text=notification_text,
-        timestamp=datetime.now(timezone.utc),
-        read=False
-    )
-    db.add(new_notification)
+    # Convert rows to list of dicts
+    dict_data = [dict(row) for row in full_data]
+    csv_file = generate_csv_report(dict_data)
+    
+    # Notification
+    db.add(Notification(user_id=user_id, text=f"{request.source} report downloaded.", timestamp=datetime.now(timezone.utc)))
     db.commit()
 
-    filename = f"report_data_{date.today().strftime('%Y%m%d')}.csv"
-    return StreamingResponse(
-        csv_file,
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    filename = f"{request.source.lower()}_report_{date.today()}.csv"
+    return StreamingResponse(csv_file, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})

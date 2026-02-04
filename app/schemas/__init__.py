@@ -6,7 +6,7 @@ from .jira_ticket import JiraTicketBase, JiraTicketResponse
 from .trigger_list import TriggerMappingBase, TriggerMappingCreate, TriggerMappingResponse, TriggerMappingUpdate
 from .user import UserBase, UserCreate, UserResponse
 from .config import ConfigBase, ConfigUpdate, ConfigResponse
-from .report_data import ReportRequest, ReportDataRow, ReportResponse
+from .report_data import ReportRequest, ReportResponse
 from .maintenance import MaintenanceBase, MaintenanceCreate, MaintenanceResponse, MaintenanceUpdate
 from .notifications import NotificationBase, NotificationCreate, NotificationResponse, NotificationStatusUpdate
 

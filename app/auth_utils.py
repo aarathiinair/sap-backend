@@ -62,5 +62,6 @@ def verify_token(token: str = Depends(oauth2_scheme)):
         if user_id is None:
             raise credentials_exception
         return payload # Returns the dict containing 'sub' and 'username'
-    except JWTError:
+    except JWTError as e:
+        print(f"JWT Decode Error: {str(e)}")
         raise credentials_exception

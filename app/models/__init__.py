@@ -14,6 +14,8 @@ from .config import Config
 from .maintenance import Maintenance, MaintenanceStatus
 from .servers import Server
 from .notifications import Notification
+from .certificates import Certificate
+from .jira_state import JiraState
 
 __all__ = [
     "Email",
@@ -31,6 +33,7 @@ __all__ = [
     'RawEmail',
     'SummaryTable',
     'JiraEntry',
-    'SegregatedEmail'
+    'SegregatedEmail',
+    'Certificate'
 ]
  
