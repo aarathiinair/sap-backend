@@ -17,6 +17,8 @@ from .notifications import Notification
 from .certificates import Certificate
 from .jira_state import JiraState
 
+from .segregated_prtg_emails import SegregatedPRTGEmail
+
 __all__ = [
     "Email",
     "DuplicateEmail",
@@ -34,6 +36,7 @@ __all__ = [
     'SummaryTable',
     'JiraEntry',
     'SegregatedEmail',
-    'Certificate'
+    'Certificate',
+    'SegregatedPRTGEmail'
 ]
  
