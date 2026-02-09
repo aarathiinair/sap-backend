@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, delete, desc, func
 from typing import List, Optional
 from datetime import datetime
+from decorators import log_function_call
 
 from app.db import get_db
 from app.models.certificates import Certificate, CertificateStatus
@@ -42,6 +43,7 @@ def calculate_status(expiry_dt: datetime) -> CertificateStatus:
 # --- ROUTES ---
 
 @router.get("/", response_model=CertificateListResponse)
+@log_function_call
 def get_certificates(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1),

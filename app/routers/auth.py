@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from app.auth_utils import create_access_token 
 from dotenv import load_dotenv
 from pathlib import Path
+from decorators import log_function_call
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -25,6 +26,7 @@ msal_app = msal.ConfidentialClientApplication(
 )
 
 @router.get("/login")
+@log_function_call
 async def login():
     """
     Step 1: Initiate Auth Flow. 
@@ -37,6 +39,7 @@ async def login():
     }
 
 @router.post("/exchange")
+@log_function_call
 async def exchange_code(payload: dict):
     flow = payload.get("flow")
     code = payload.get("code")

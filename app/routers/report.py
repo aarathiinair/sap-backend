@@ -11,10 +11,12 @@ from app.auth_utils import verify_token
 from datetime import datetime, timezone, date
 import uuid
 from typing import List, Tuple, Any
+from decorators import log_function_call
 
 router = APIRouter(prefix="/data", tags=["Report Generation"])
 
 # --- HANDLER 1: ControlUp ---
+@log_function_call
 def query_controlup_mails(db: Session, request: ReportRequest):
     # 1. CTE for latest Jira Entry per email
     jira_subquery = select(
@@ -93,6 +95,7 @@ def query_controlup_mails(db: Session, request: ReportRequest):
     return stmt, sort_map
 
 # --- HANDLER 2: Certificates ---
+@log_function_call
 def query_certificates(db: Session, request: ReportRequest):
     # 1. Base Query
     stmt = select(
@@ -146,6 +149,7 @@ REPORT_HANDLERS = {
     "Certificates": query_certificates
 }
 
+@log_function_call
 def get_filtered_query(db: Session, request: ReportRequest):
     handler = REPORT_HANDLERS.get(request.source)
     if not handler:
@@ -163,6 +167,7 @@ def get_filtered_query(db: Session, request: ReportRequest):
     return stmt
 
 @router.get("/", response_model=ReportResponse)
+@log_function_call
 async def get_report_data(request: ReportRequest = Depends(), db: Session = Depends(get_db)):
     # 1. Get the base query (without sorting)
     handler = REPORT_HANDLERS.get(request.source)
@@ -200,6 +205,7 @@ async def get_report_data(request: ReportRequest = Depends(), db: Session = Depe
     )
 
 @router.post("/download")
+@log_function_call
 async def download_report(
     request: ReportRequest = Body(...),  # Explicitly tell FastAPI this is the JSON body
     db: Session = Depends(get_db), 
