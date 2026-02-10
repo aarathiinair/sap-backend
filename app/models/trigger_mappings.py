@@ -21,3 +21,12 @@ class TriggerMapping(Base):
 
     def __repr__(self):
         return f"<TriggerMapping(trigger='{self.trigger_name[:40]}...', team='{self.team}')>"
+
+class TriggerCategory(Base):
+    __tablename__ = "trigger_categories"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category = Column(String(100), nullable=False, unique=True, index=True)
+
+    def __repr__(self):
+        return f"<TriggerCategory(category='{self.category}')>"
