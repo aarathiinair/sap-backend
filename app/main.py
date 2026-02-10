@@ -23,9 +23,9 @@ load_dotenv()
 Base.metadata.create_all(bind=engine)
  
 app = FastAPI(
-    title="Admin Console API",
+    title="Login Console API",
     version="1.0.0",
-    description="Backend APIs for Admin Console"
+    description="Backend APIs for Login Console"
 )
 
 app.add_middleware(

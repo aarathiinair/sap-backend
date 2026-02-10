@@ -67,7 +67,8 @@ async def exchange_code(payload: dict):
 
     # Extract user info
     claims = result.get("id_token_claims", {})
-    username = claims.get("preferred_username") or claims.get("name")
+    # username = claims.get("preferred_username") or claims.get("name")
+    username = claims.get("name")
     
     if not username:
         raise HTTPException(status_code=400, detail="Could not retrieve username from Microsoft.")
