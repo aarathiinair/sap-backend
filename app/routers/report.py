@@ -106,6 +106,7 @@ def query_certificates(db: Session, request: ReportRequest):
         Certificate.teams_channel,
         Certificate.description,
         Certificate.usage,
+        Certificate.impacted_servers,
         Certificate.effected_users,
         JiraState.jira_ticket_id
     ).select_from(Certificate)\
