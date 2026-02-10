@@ -23,6 +23,7 @@ class Certificate(Base):
     expiration_date: Mapped[datetime] = Column(DateTime, nullable=False)
     description: Mapped[Optional[str]] = Column(String, nullable=True)
     usage: Mapped[Optional[str]] = Column(String, nullable=True)
+    impacted_servers: Mapped[Optional[str]] = Column(String, nullable=True)
     responsible_group: Mapped[str] = Column(String, nullable=False)
     teams_channel: Mapped[str] = Column(String, nullable=False)
     effected_users: Mapped[Optional[str]] = Column(String, nullable=True)

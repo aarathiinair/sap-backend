@@ -8,6 +8,7 @@ class CertificateBase(BaseModel):
     expiration_date: datetime
     description: Optional[str] = None
     usage: Optional[str] = None
+    impacted_servers: Optional[str] = None
     responsible_group: str
     teams_channel: str
 
@@ -29,6 +30,7 @@ class CertificateUpdate(BaseModel):
     expiration_date: Optional[datetime] = None
     description: Optional[str] = None
     usage: Optional[str] = None
+    impacted_servers: Optional[str] = None
     responsible_group: Optional[str] = None
     teams_channel: Optional[str] = None
 

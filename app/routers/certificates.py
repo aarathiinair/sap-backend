@@ -17,15 +17,18 @@ router = APIRouter(
 
 # --- HELPER FUNCTIONS ---
 
-def validate_teams_channel(channel_name: str, db: Session):
-    """Checks if the Teams Channel exists in webhook_mappings table."""
-    stmt = select(WebhookMapping).where(WebhookMapping.channel_name == channel_name)
+def validate_mapping_value(value: str, field_label: str, db: Session):
+    """
+    Checks if a value exists in the WebhookMapping table's channel_name column.
+    Used for both Teams Channel and Responsible Group validation.
+    """
+    stmt = select(WebhookMapping).where(WebhookMapping.channel_name == value)
     mapping = db.execute(stmt).scalar_one_or_none()
     
     if not mapping:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{channel_name} is an unknown channel. Please add the channel with it's Webhook URL on the Configuration screen first."
+            detail=f"'{value}' is an unknown {field_label}. Please add it on the Configuration screen first."
         )
 
 def calculate_status(expiry_dt: datetime) -> CertificateStatus:
@@ -72,11 +75,13 @@ def get_certificates(
 
 @router.post("/", response_model=CertificateResponse, status_code=status.HTTP_201_CREATED)
 def create_certificate(cert_data: CertificateCreate, db: Session = Depends(get_db)):
-    # Check if the Teams Channel is valid before proceeding
-    validate_teams_channel(cert_data.teams_channel, db)
+    # Validate both dropdown values against the WebhookMapping table
+    validate_mapping_value(cert_data.teams_channel, "Teams Channel", db)
+    validate_mapping_value(cert_data.responsible_group, "Responsible Group", db)
     
     expiry_dt = cert_data.expiration_date.replace(microsecond=0)
     
+    # impacted_servers is included via **cert_data.model_dump()
     new_cert = Certificate(
         **cert_data.model_dump(),
         calculated_status=calculate_status(expiry_dt)
@@ -95,9 +100,12 @@ def update_certificate(cert_id: int, cert_data: CertificateUpdate, db: Session =
     
     update_dict = cert_data.model_dump(exclude_unset=True)
     
-    # Check if teams_channel is being updated and validate it
+    # Validate dropdowns if they are being updated
     if 'teams_channel' in update_dict:
-        validate_teams_channel(update_dict['teams_channel'], db)
+        validate_mapping_value(update_dict['teams_channel'], "Teams Channel", db)
+    
+    if 'responsible_group' in update_dict:
+        validate_mapping_value(update_dict['responsible_group'], "Responsible Group", db)
     
     for key, value in update_dict.items():
         if key == 'expiration_date':
