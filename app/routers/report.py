@@ -5,7 +5,7 @@ from sqlalchemy import select, func, desc, asc, and_, cast, String
 from sqlalchemy.dialects import postgresql
 from app.db import get_db
 from app.schemas.report_data import ReportRequest, ReportResponse
-from app.models import RawEmail, SegregatedEmail, SegregatedPRTGEmail, JiraEntry, Notification, Certificate, JiraState
+from app.models import RawEmail, SegregatedEmail, SegregatedPRTGEmail, SegregatedIMCEmail, JiraEntry, Notification, Certificate, JiraState
 from app.report_utils import generate_csv_report
 from app.auth_utils import verify_token
 from datetime import datetime, timezone, date
@@ -58,7 +58,9 @@ def query_controlup_mails(db: Session, request: ReportRequest):
 
     # 4. Filter Logic Fix
     # Ensure start/end date are within range
-    filter_clauses = [RawEmail.received_at >= request.start_date, RawEmail.received_at <= request.end_date]
+    filter_clauses = [RawEmail.received_at >= request.start_date,
+                      RawEmail.received_at <= request.end_date, 
+                      RawEmail.sender == 'ControlUp@bitzer.de']
     
     if request.filter_type:
         search_type = request.filter_type.lower()
@@ -218,11 +220,88 @@ def query_prtg_mails(db: Session, request: ReportRequest):
     
     return stmt, sort_map
 
+def query_imc_mails(db: Session, request: ReportRequest):
+    # 1. CTE for latest Jira Entry per email (Logic identical to ControlUp)
+    jira_subquery = select(
+        JiraEntry.email_id.label('sq_email_id'),
+        JiraEntry.jiraticket_id.label('jiraticket_id'), 
+        JiraEntry.created_at.label('sq_created_at'),
+        JiraEntry.assigned_to.label('assigned_to'),
+        JiraEntry.teams_channel.label('teams_channel'),
+        func.row_number().over(
+            partition_by=JiraEntry.email_id,
+            order_by=desc(JiraEntry.created_at)
+        ).label('rn')
+    ).cte('jira_subquery')
+
+    latest_jira = select(
+        jira_subquery.c.sq_email_id,
+        jira_subquery.c.jiraticket_id,
+        jira_subquery.c.sq_created_at,
+        jira_subquery.c.assigned_to,
+        jira_subquery.c.teams_channel
+    ).where(jira_subquery.c.rn == 1).subquery('latest_jira')
+
+    # 2. Main Statement targeting SegregatedIMCEmail
+    stmt = select(
+        RawEmail.email_id.label("email_id"),
+        RawEmail.received_at.label("received_at"),
+        RawEmail.sender.label("sender"),
+        RawEmail.subject.label("subject"),
+        func.coalesce(SegregatedIMCEmail.priority, func.cast('Informational', postgresql.VARCHAR)).label("priority"),
+        func.coalesce(SegregatedIMCEmail.type, func.cast('Informational', postgresql.VARCHAR)).label("type"),
+        SegregatedIMCEmail.device.label("device"),
+        latest_jira.c.jiraticket_id.label("jiraticket_id"), 
+        latest_jira.c.sq_created_at.label("timestamp"),
+        latest_jira.c.assigned_to.label("assigned_to"),
+        latest_jira.c.teams_channel.label("teams_channel"),
+    ).select_from(RawEmail)\
+     .outerjoin(SegregatedIMCEmail, RawEmail.email_id == SegregatedIMCEmail.email_id)\
+     .outerjoin(latest_jira, RawEmail.email_id == latest_jira.c.sq_email_id)
+
+    # 3. Filter Logic (Including new Sender check)
+    filter_clauses = [
+        RawEmail.received_at >= request.start_date, 
+        RawEmail.received_at <= request.end_date,
+        RawEmail.sender == 'imc@bitzer.de'
+    ]
+    
+    if request.filter_type:
+        search_type = request.filter_type.lower()
+        if search_type == "informational":
+            filter_clauses.append((SegregatedIMCEmail.type == None) | (func.lower(SegregatedIMCEmail.type) == "informational"))
+        else:
+            filter_clauses.append(func.lower(SegregatedIMCEmail.type) == search_type)
+    
+    if request.filter_priority:
+        search_priority = request.filter_priority.lower()
+        if search_priority == "informational":
+            filter_clauses.append((SegregatedIMCEmail.priority == None) | (func.lower(SegregatedIMCEmail.priority) == "informational"))
+        else:
+            filter_clauses.append(func.lower(SegregatedIMCEmail.priority) == search_priority)
+
+    stmt = stmt.where(and_(*filter_clauses))
+    
+    # 4. Sort Map (Including device and sensor)
+    sort_map = {
+        "received_at": RawEmail.received_at,
+        "sender": RawEmail.sender,
+        "subject": RawEmail.subject,
+        "priority": func.lower(SegregatedIMCEmail.priority),
+        "type": func.lower(SegregatedIMCEmail.type),
+        "device": SegregatedIMCEmail.device,
+        "timestamp": latest_jira.c.sq_created_at,
+        "assigned_to": latest_jira.c.assigned_to
+    }
+    
+    return stmt, sort_map
+
 # --- Registry Mapping ---
 REPORT_HANDLERS = {
     "ControlUp": query_controlup_mails,
     "Certificates": query_certificates,
-    "PRTG": query_prtg_mails
+    "PRTG": query_prtg_mails,
+    "IMC": query_imc_mails
 }
 
 def get_filtered_query(db: Session, request: ReportRequest):

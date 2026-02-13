@@ -26,6 +26,7 @@ class RawEmail(Base):
     # Relationships back to the processing tables (Lazy loading is default)
     segregation = relationship("SegregatedEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     segregation_prtg = relationship("SegregatedPRTGEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
+    segregation_imc = relationship("SegregatedIMCEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     summary = relationship("SummaryTable", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     jira_entry = relationship("JiraEntry", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     
