@@ -27,6 +27,9 @@ class RawEmail(Base):
     segregation = relationship("SegregatedEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     segregation_prtg = relationship("SegregatedPRTGEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     segregation_imc = relationship("SegregatedIMCEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
+    segregation_microsoft = relationship("SegregatedMicrosoftEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
+    segregation_sap = relationship("SegregatedSAPEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
+    segregation_gms = relationship("SegregatedGMSEmail", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     summary = relationship("SummaryTable", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     jira_entry = relationship("JiraEntry", back_populates="raw_email", uselist=False, cascade="all, delete-orphan")
     

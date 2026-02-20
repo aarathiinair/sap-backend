@@ -19,6 +19,9 @@ from .jira_state import JiraState
 
 from .segregated_prtg_emails import SegregatedPRTGEmail
 from .segregated_imc_emails import SegregatedIMCEmail
+from .segregated_gms_emails import SegregatedGMSEmail
+from .segregated_microsoft_emails import SegregatedMicrosoftEmail
+from .segregated_sap_emails import SegregatedSAPEmail
 
 __all__ = [
     "Email",
@@ -39,6 +42,9 @@ __all__ = [
     'SegregatedEmail',
     'Certificate',
     'SegregatedPRTGEmail',
-    'SegregatedIMCEmail'
+    'SegregatedIMCEmail',
+    'SegregatedGMSEmail',
+    'SegregatedMicrosoftEmail',
+    'SegregatedSAPEmail'
 ]
  
