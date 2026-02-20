@@ -263,7 +263,7 @@ def query_imc_mails(db: Session, request: ReportRequest):
     filter_clauses = [
         RawEmail.received_at >= request.start_date, 
         RawEmail.received_at <= request.end_date,
-        RawEmail.sender == 'imc@bitzer.de'
+        RawEmail.sender == 'imc@bitzer.biz'
     ]
     
     if request.filter_type:

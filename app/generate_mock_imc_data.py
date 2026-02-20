@@ -9,7 +9,7 @@ from app.db import get_db
 from app.models import RawEmail, SegregatedIMCEmail, JiraEntry
 
 # --- CONFIGURATION ---
-TEST_SENDER = 'imc@bitzer.de'  # Configurable sender for IMC reports
+TEST_SENDER = 'imc@bitzer.biz'  # Configurable sender for IMC reports
 NUM_RECORDS = 100 
 JIRA_PREFIX = "MAI"
 # ---------------------
