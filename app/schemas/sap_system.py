@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional
+from pydantic import ConfigDict
 
 
 class SapSystemBase(BaseModel):
@@ -30,8 +31,7 @@ class SapSystemUpdate(BaseModel):
 
 
 class SapSystemResponse(SapSystemBase):
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SapSystemListResponse(BaseModel):
