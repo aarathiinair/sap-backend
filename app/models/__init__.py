@@ -23,6 +23,8 @@ from .segregated_gms_emails import SegregatedGMSEmail
 from .segregated_microsoft_emails import SegregatedMicrosoftEmail
 from .segregated_sap_emails import SegregatedSAPEmail
 
+from .sap_system_priority import SapSystemPriority
+
 __all__ = [
     "Email",
     "DuplicateEmail",
@@ -45,6 +47,6 @@ __all__ = [
     'SegregatedIMCEmail',
     'SegregatedGMSEmail',
     'SegregatedMicrosoftEmail',
-    'SegregatedSAPEmail'
+    'SegregatedSAPEmail',
+    'SapSystemPriority',
 ]
- 
